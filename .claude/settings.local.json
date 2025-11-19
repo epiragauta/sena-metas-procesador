@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ren \"C:\\ws\\sena\\data\\seguimiento_metas\\sena-metas-procesador\\xlsb_api.py\" \"api.py\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
