@@ -2,6 +2,14 @@
 
 API en Python para convertir archivos Excel binarios (.xlsb) a formato JSON.
 
+## Prerequisitos
+
+Crear entorno virtual 
+```bash
+python -m venv venv
+venv\scripts\activate.bat
+```
+
 ## Instalación
 
 ```bash
@@ -14,13 +22,13 @@ pip install -r requirements.txt
 ### Iniciar el servidor
 
 ```bash
-uvicorn xlsb_api:app --reload --port 8000
+uvicorn app:app --reload --port 8000
 ```
 
 O directamente:
 
 ```bash
-python xlsb_api.py
+python app.py
 ```
 
 La API estará disponible en `http://localhost:8000`

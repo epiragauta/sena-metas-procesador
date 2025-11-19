@@ -16,12 +16,55 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List
 from pyxlsb import open_workbook
+from pymongo import MongoClient
+from dotenv import load_dotenv
 import json
 import os
 import tempfile
 import shutil
+import re
+import unicodedata
 from pathlib import Path
 from datetime import datetime
+
+# Cargar variables de entorno
+load_dotenv()
+
+# Conexión a MongoDB
+MONGODB_URI = os.getenv("MONGODB_URI")
+mongo_client = None
+db = None
+
+def get_database():
+    """Obtiene la conexión a la base de datos MongoDB."""
+    global mongo_client, db
+    if mongo_client is None:
+        mongo_client = MongoClient(MONGODB_URI)
+        db = mongo_client.get_database("sena_metas")
+    return db
+
+def normalize_collection_name(sheet_name: str) -> str:
+    """
+    Normaliza el nombre de la hoja para usarlo como nombre de colección.
+    Convierte a minúsculas y elimina caracteres especiales.
+    """
+    # Normalizar caracteres unicode (remover acentos)
+    normalized = unicodedata.normalize('NFKD', sheet_name)
+    normalized = normalized.encode('ASCII', 'ignore').decode('ASCII')
+    # Convertir a minúsculas
+    normalized = normalized.lower()
+    # Reemplazar espacios y caracteres especiales por guiones bajos
+    normalized = re.sub(r'[^a-z0-9]', '_', normalized)
+    # Eliminar guiones bajos múltiples
+    normalized = re.sub(r'_+', '_', normalized)
+    # Eliminar guiones bajos al inicio y final
+    normalized = normalized.strip('_')
+    return normalized
+
+def is_ejecucion_fpi_file(filename: str) -> bool:
+    """Verifica si el archivo es de tipo 'ejecución FPI'."""
+    normalized = filename.lower()
+    return 'ejecucion fpi' in normalized or 'ejecución fpi' in normalized
 
 app = FastAPI(
     title="XLSB to JSON API",
@@ -137,6 +180,7 @@ async def root():
 async def upload_file(file: UploadFile = File(...)):
     """
     Sube un archivo XLSB para procesamiento.
+    Si el nombre contiene 'ejecución FPI', guarda los datos en MongoDB.
 
     Returns:
         ID del archivo y lista de hojas disponibles
@@ -167,12 +211,49 @@ async def upload_file(file: UploadFile = File(...)):
         "uploaded_at": datetime.now().isoformat()
     }
 
-    return {
+    # Si es archivo de ejecución FPI, guardar en MongoDB
+    mongodb_collections = []
+    if is_ejecucion_fpi_file(file.filename):
+        try:
+            database = get_database()
+            for sheet_name in sheets:
+                # Leer datos de la hoja
+                data = read_xlsb_sheet(str(file_path), sheet_name)
+
+                if data:
+                    # Crear nombre de colección normalizado
+                    collection_name = f"ejecucion_fpi_{normalize_collection_name(sheet_name)}"
+
+                    # Obtener colección y limpiar datos anteriores
+                    collection = database[collection_name]
+                    collection.delete_many({})
+
+                    # Insertar nuevos datos
+                    collection.insert_many(data)
+
+                    mongodb_collections.append({
+                        "sheet_name": sheet_name,
+                        "collection_name": collection_name,
+                        "records_inserted": len(data)
+                    })
+        except Exception as e:
+            # No fallar el upload si MongoDB tiene problemas
+            mongodb_collections.append({
+                "error": f"Error al guardar en MongoDB: {str(e)}"
+            })
+
+    response = {
         "file_id": file_id,
         "original_name": file.filename,
         "sheets": sheets,
         "message": f"Archivo subido exitosamente. {len(sheets)} hojas disponibles (excluyendo SQL)."
     }
+
+    if mongodb_collections:
+        response["mongodb_collections"] = mongodb_collections
+        response["message"] += f" Datos guardados en {len([c for c in mongodb_collections if 'collection_name' in c])} colecciones de MongoDB."
+
+    return response
 
 
 @app.get("/files")
