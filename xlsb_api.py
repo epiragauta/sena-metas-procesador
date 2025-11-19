@@ -26,7 +26,10 @@ from datetime import datetime
 app = FastAPI(
     title="XLSB to JSON API",
     description="API para convertir archivos XLSB a JSON",
-    version="1.0.0"
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json"
 )
 
 # Configurar CORS
