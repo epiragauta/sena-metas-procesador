@@ -504,6 +504,291 @@ async def process_local_file(
     }
 
 
+# =============================================================================
+# Endpoints para MongoDB
+# =============================================================================
+
+@app.get("/mongodb/collections")
+async def list_mongodb_collections():
+    """
+    Lista todas las colecciones disponibles en MongoDB.
+    """
+    try:
+        database = get_database()
+        collections = database.list_collection_names()
+
+        # Filtrar solo colecciones de ejecucion_fpi
+        fpi_collections = [c for c in collections if c.startswith("ejecucion_fpi_")]
+
+        collection_info = []
+        for collection_name in fpi_collections:
+            count = database[collection_name].count_documents({})
+            collection_info.append({
+                "collection_name": collection_name,
+                "document_count": count
+            })
+
+        return {
+            "total_collections": len(fpi_collections),
+            "collections": collection_info
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al conectar con MongoDB: {str(e)}")
+
+
+@app.get("/mongodb/collections/{collection_name}")
+async def get_collection_data(
+    collection_name: str,
+    limit: Optional[int] = Query(None, description="Límite de registros"),
+    offset: Optional[int] = Query(0, description="Offset de registros"),
+    sort_by: Optional[str] = Query(None, description="Campo por el cual ordenar"),
+    sort_order: Optional[int] = Query(1, description="Orden: 1 ascendente, -1 descendente")
+):
+    """
+    Obtiene los datos de una colección de MongoDB.
+
+    Args:
+        collection_name: Nombre de la colección
+        limit: Número máximo de registros a retornar
+        offset: Número de registros a saltar
+        sort_by: Campo para ordenar
+        sort_order: 1 para ascendente, -1 para descendente
+    """
+    try:
+        database = get_database()
+
+        # Verificar que la colección existe
+        if collection_name not in database.list_collection_names():
+            raise HTTPException(status_code=404, detail=f"Colección '{collection_name}' no encontrada")
+
+        collection = database[collection_name]
+        total = collection.count_documents({})
+
+        # Construir query
+        cursor = collection.find({}, {"_id": 0})
+
+        # Aplicar ordenamiento
+        if sort_by:
+            cursor = cursor.sort(sort_by, sort_order)
+
+        # Aplicar paginación
+        if offset:
+            cursor = cursor.skip(offset)
+        if limit:
+            cursor = cursor.limit(limit)
+
+        data = list(cursor)
+
+        return {
+            "collection_name": collection_name,
+            "total_records": total,
+            "returned_records": len(data),
+            "offset": offset,
+            "limit": limit,
+            "data": data
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener datos: {str(e)}")
+
+
+@app.get("/mongodb/collections/{collection_name}/schema")
+async def get_collection_schema(collection_name: str):
+    """
+    Obtiene el esquema (campos) de una colección basado en el primer documento.
+
+    Args:
+        collection_name: Nombre de la colección
+    """
+    try:
+        database = get_database()
+
+        if collection_name not in database.list_collection_names():
+            raise HTTPException(status_code=404, detail=f"Colección '{collection_name}' no encontrada")
+
+        collection = database[collection_name]
+
+        # Obtener primer documento para inferir esquema
+        sample = collection.find_one({}, {"_id": 0})
+
+        if not sample:
+            return {
+                "collection_name": collection_name,
+                "fields": [],
+                "message": "Colección vacía"
+            }
+
+        fields = []
+        for key, value in sample.items():
+            field_type = type(value).__name__
+            fields.append({
+                "field_name": key,
+                "field_type": field_type
+            })
+
+        return {
+            "collection_name": collection_name,
+            "total_fields": len(fields),
+            "fields": fields
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener esquema: {str(e)}")
+
+
+@app.get("/mongodb/collections/{collection_name}/search")
+async def search_collection(
+    collection_name: str,
+    field: str = Query(..., description="Campo a buscar"),
+    value: str = Query(..., description="Valor a buscar"),
+    exact: bool = Query(False, description="Búsqueda exacta o parcial"),
+    limit: Optional[int] = Query(100, description="Límite de registros")
+):
+    """
+    Busca documentos en una colección por un campo específico.
+
+    Args:
+        collection_name: Nombre de la colección
+        field: Campo donde buscar
+        value: Valor a buscar
+        exact: Si es True, búsqueda exacta. Si es False, búsqueda parcial (regex)
+        limit: Número máximo de resultados
+    """
+    try:
+        database = get_database()
+
+        if collection_name not in database.list_collection_names():
+            raise HTTPException(status_code=404, detail=f"Colección '{collection_name}' no encontrada")
+
+        collection = database[collection_name]
+
+        # Construir query
+        if exact:
+            # Intentar convertir a número si es posible
+            try:
+                numeric_value = float(value)
+                query = {field: numeric_value}
+            except ValueError:
+                query = {field: value}
+        else:
+            # Búsqueda parcial con regex (case insensitive)
+            query = {field: {"$regex": value, "$options": "i"}}
+
+        cursor = collection.find(query, {"_id": 0}).limit(limit)
+        data = list(cursor)
+
+        return {
+            "collection_name": collection_name,
+            "search_field": field,
+            "search_value": value,
+            "exact_match": exact,
+            "results_count": len(data),
+            "data": data
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en búsqueda: {str(e)}")
+
+
+@app.delete("/mongodb/collections/{collection_name}")
+async def delete_collection(collection_name: str):
+    """
+    Elimina una colección de MongoDB.
+
+    Args:
+        collection_name: Nombre de la colección a eliminar
+    """
+    try:
+        database = get_database()
+
+        if collection_name not in database.list_collection_names():
+            raise HTTPException(status_code=404, detail=f"Colección '{collection_name}' no encontrada")
+
+        database[collection_name].drop()
+
+        return {
+            "message": f"Colección '{collection_name}' eliminada exitosamente"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al eliminar colección: {str(e)}")
+
+
+@app.get("/mongodb/collections/{collection_name}/aggregate")
+async def aggregate_collection(
+    collection_name: str,
+    group_by: str = Query(..., description="Campo por el cual agrupar"),
+    aggregate_field: Optional[str] = Query(None, description="Campo numérico para agregar"),
+    operation: str = Query("count", description="Operación: count, sum, avg, min, max")
+):
+    """
+    Realiza agregaciones básicas en una colección.
+
+    Args:
+        collection_name: Nombre de la colección
+        group_by: Campo por el cual agrupar
+        aggregate_field: Campo numérico para operaciones sum/avg/min/max
+        operation: Tipo de operación (count, sum, avg, min, max)
+    """
+    try:
+        database = get_database()
+
+        if collection_name not in database.list_collection_names():
+            raise HTTPException(status_code=404, detail=f"Colección '{collection_name}' no encontrada")
+
+        collection = database[collection_name]
+
+        # Construir pipeline de agregación
+        if operation == "count":
+            pipeline = [
+                {"$group": {"_id": f"${group_by}", "value": {"$sum": 1}}},
+                {"$sort": {"value": -1}}
+            ]
+        elif operation in ["sum", "avg", "min", "max"]:
+            if not aggregate_field:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Se requiere 'aggregate_field' para la operación '{operation}'"
+                )
+            op_map = {
+                "sum": "$sum",
+                "avg": "$avg",
+                "min": "$min",
+                "max": "$max"
+            }
+            pipeline = [
+                {"$group": {"_id": f"${group_by}", "value": {op_map[operation]: f"${aggregate_field}"}}},
+                {"$sort": {"value": -1}}
+            ]
+        else:
+            raise HTTPException(status_code=400, detail=f"Operación '{operation}' no soportada")
+
+        results = list(collection.aggregate(pipeline))
+
+        # Formatear resultados
+        formatted_results = [
+            {group_by: r["_id"], operation: r["value"]}
+            for r in results
+        ]
+
+        return {
+            "collection_name": collection_name,
+            "group_by": group_by,
+            "operation": operation,
+            "aggregate_field": aggregate_field,
+            "results_count": len(formatted_results),
+            "data": formatted_results
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en agregación: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
