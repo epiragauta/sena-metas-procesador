@@ -124,7 +124,7 @@ curl "http://127.0.0.1:8000/mongodb/collections/metas_fpi_centros?limit=1"
 
 ## Estructura de Datos Implementada
 
-### Campos de Identificación
+### Campos de Identificación (Centros)
 ```json
 {
   "PERIODO": "2025",
@@ -134,6 +134,19 @@ curl "http://127.0.0.1:8000/mongodb/collections/metas_fpi_centros?limit=1"
   "CENTRO": "CENTRO DE LOS RECURSOS NATURALES RENOVABLES - LA SALADA"
 }
 ```
+
+### Campos de Identificación (Regional)
+```json
+{
+  "PERIODO": "2025",
+  "COD_REGIONAL": 5,
+  "REGIONAL": "REGIONAL ANTIOQUIA",
+  "COD_CENTRO": null,
+  "CENTRO": null
+}
+```
+
+**Nota:** La hoja "4. FORMACIÓN X REGIONAL" solo tiene 2 columnas de identificación en el Excel (COD_REGIONAL y REGIONAL), por lo que COD_CENTRO y CENTRO se establecen como `null`. La hoja "5. FORMACIÓN X CTROS" tiene las 4 columnas.
 
 ### Campos de Metas (36 campos M_*)
 
@@ -218,6 +231,24 @@ Según `ESTRATEGIA_IMPLEMENTACION_API.md`, la siguiente fase incluye:
 ### CORS
 - Configurado para permitir requests desde frontend Angular
 - Orígenes permitidos: `http://localhost:4200` y dominio de producción
+
+### Mejoras Técnicas Implementadas
+
+**Normalización de Texto:**
+- Implementada función que elimina tildes y normaliza caracteres antes de comparar
+- Permite matching robusto entre categorías del Excel y mapeo predefinido
+- Ejemplo: "Tecnologos" (Excel sin tilde) → "Tecnólogos" (mapeo con tilde) ✓
+
+**Detección Automática de Estructura:**
+- El sistema detecta automáticamente si la hoja es REGIONAL o CTROS
+- Ajusta el mapeo de columnas según la estructura:
+  - **REGIONAL:** Columnas A-B para identificación, C+ para metas
+  - **CTROS:** Columnas A-D para identificación, E+ para metas
+
+**Manejo Robusto de Datos:**
+- Validación de índices de columnas antes de acceder a valores
+- Conversión segura de valores numéricos con manejo de excepciones
+- Campos null vs 0.0 según contexto (identificación vs metas)
 
 ---
 

@@ -163,39 +163,40 @@ Obtiene datos de metas consolidadas por regional.
       "PERIODO": "2025",
       "COD_REGIONAL": 5,
       "REGIONAL": "REGIONAL ANTIOQUIA",
-      "COD_CENTRO": 44382,
-      "CENTRO": 41751,
-      "M_tecnologos_regular_presencial": 44382.0,
+      "COD_CENTRO": null,
+      "CENTRO": null,
+      "M_TEC_REG_PRE": 44382.0,
       "M_TEC_REG_VIR": 22934.0,
       "M_TEC_REG_A_D": 4983.0,
       "M_TEC_CAMPESE": 271.0,
       "M_TEC_FULL_PO": 0.0,
-      "M_total_tecnologos_e": 72570.0,
-      "M_total_educacion_superior_e": 72570.0,
+      "M_TECNOLOGOS": 72570.0,
+      "M_EDU_SUPERIO": 72570.0,
       "M_OPE_REGULAR": 3653.0,
       "M_OPE_CAMPESE": 274.0,
       "M_OPE_FULL_PO": 101.0,
-      "M_total_operarios_b": 4028.0,
+      "M_SUB_TOT_OPE": 4028.0,
       "M_AUX_REGULAR": 633.0,
       "M_AUX_CAMPESE": 136.0,
       "M_AUX_FULL_PO": 161.0,
-      "M_total_auxiliares_a": 930.0,
+      "M_SUB_TOT_AUX": 930.0,
       "M_TCO_REG_PRE": 32065.0,
       "M_TCO_REG_VIR": 9548.0,
       "M_TCO_CAMPESE": 3177.0,
       "M_TCO_FULL_PO": 165.0,
       "M_TCO_ART_MED": 49794.0,
-      "M_total_tecnico_laboral_c": 94749.0,
-      "M_total_profundizacion_tecnica_t": 30.0,
+      "M_SUB_TCO_LAB": 94749.0,
+      "M_PROF_TECNIC": 30.0,
       "M_TOT_FOR_LAB": 99737.0,
-      "M_formacion_complementaria_virtual_sin_bilinguismo_g": 235360.0,
-      "M_formacion_complementaria_presencial_sin_bilinguismo_h": 260190.0,
-      "M_programa_de_bilinguismo_virtual_i": 86160.0,
-      "M_programa_de_bilinguismo_presencial_j": 12770.0,
-      "M_total_programa_de_bilinguismo_k": 98930.0,
+      "M_TOT_FOR_TIT": 172307.0,
+      "M_COM_VIR_SBI": 235360.0,
+      "M_COM_PRE_SBI": 260190.0,
+      "M_COM_BIL_VIR": 86160.0,
+      "M_COM_BIL_PRE": 12770.0,
+      "M_SUB_PRO_BIN": 98930.0,
       "M_COM_CAMPESE": 82729.0,
       "M_COM_FULL_PO": 7040.0,
-      "M_total_formacion_complementaria_n_g_h_k_l_m_incluye_los_cupos_de_formacion_continua_especial_campesina": 684249.0,
+      "M_TOT_COMPLEM": 684249.0,
       "M_TOT_PROF_IN": 354002.0
     }
     // ... más registros
@@ -230,8 +231,10 @@ curl "http://localhost:8000/mongodb/collections/metas_fpi_regional?limit=5"
 - `PERIODO`: Año de las metas (e.g., "2025")
 - `COD_REGIONAL`: Código numérico de la regional
 - `REGIONAL`: Nombre de la regional
-- `COD_CENTRO`: Código consolidado (no aplicable para regional)
-- `CENTRO`: Código consolidado (no aplicable para regional)
+- `COD_CENTRO`: `null` (no aplicable para datos regionales consolidados)
+- `CENTRO`: `null` (no aplicable para datos regionales consolidados)
+
+**Nota:** La hoja "4. FORMACIÓN X REGIONAL" solo tiene 2 columnas de identificación (COD_REGIONAL y REGIONAL), mientras que la hoja "5. FORMACIÓN X CTROS" tiene 4 columnas (COD_REGIONAL, REGIONAL, COD_CENTRO y CENTRO).
 
 ### Campos de Metas (prefijo M_)
 
@@ -317,8 +320,12 @@ Todos los campos de metas comienzan con el prefijo `M_` y representan cupos (met
 1. **Reemplazo de datos:** Al cargar un nuevo archivo, los datos anteriores se eliminan completamente
 2. **Periodo fijo:** Actualmente el periodo está hardcoded a "2025"
 3. **Normalización de nombres:** Los nombres de categorías del Excel se normalizan a snake_case con prefijo M_
-4. **Campos vacíos:** Los valores vacíos en Excel se convierten en `null` o `0.0` según el contexto
-5. **Encoding:** Todos los textos están en UTF-8
+4. **Normalización de texto:** El sistema elimina tildes y normaliza el texto al comparar categorías del Excel con el mapeo, permitiendo que "Tecnologos" (sin tilde) coincida con "Tecnólogos" (con tilde)
+5. **Diferencias entre hojas:**
+   - **Hoja REGIONAL:** 2 columnas de identificación (COD_REGIONAL, REGIONAL)
+   - **Hoja CTROS:** 4 columnas de identificación (COD_REGIONAL, REGIONAL, COD_CENTRO, CENTRO)
+6. **Campos vacíos:** Los valores vacíos en Excel se convierten en `null` o `0.0` según el contexto
+7. **Encoding:** Todos los textos están en UTF-8
 
 ---
 
@@ -332,6 +339,3 @@ Todos los campos de metas comienzan con el prefijo `M_` y representan cupos (met
 
 ---
 
-## Contacto y Soporte
-
-Para más información sobre esta API, consulta el repositorio del proyecto o el archivo `ESTRATEGIA_IMPLEMENTACION_API.md`.
