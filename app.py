@@ -18,6 +18,7 @@ from typing import Optional, List
 from pyxlsb import open_workbook
 from pymongo import MongoClient
 from dotenv import load_dotenv
+import openpyxl
 import json
 import os
 import tempfile
@@ -65,6 +66,11 @@ def is_ejecucion_fpi_file(filename: str) -> bool:
     """Verifica si el archivo es de tipo 'ejecución FPI'."""
     normalized = filename.lower()
     return 'ejecucion fpi' in normalized or 'ejecución fpi' in normalized
+
+def is_metas_file(filename: str) -> bool:
+    """Verifica si el archivo es de tipo 'metas SENA'."""
+    normalized = filename.lower()
+    return 'seguimiento' in normalized and 'metas' in normalized and 'sena' in normalized
 
 app = FastAPI(
     title="XLSB to JSON API",
@@ -157,6 +163,178 @@ def get_sheet_names(file_path: str, exclude_sql: bool = True) -> List[str]:
         if exclude_sql:
             sheets = [s for s in sheets if 'SQL' not in s.upper()]
         return sheets
+
+
+def read_xlsx_sheet_metas(file_path: str, sheet_name: str) -> List[dict]:
+    """
+    Lee una hoja de un archivo XLSX (metas) y extrae solo las columnas de Cupos.
+
+    Args:
+        file_path: Ruta al archivo XLSX
+        sheet_name: Nombre de la hoja a leer
+
+    Returns:
+        Lista de diccionarios con las metas por centro/regional
+    """
+    wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
+
+    if sheet_name not in wb.sheetnames:
+        wb.close()
+        raise ValueError(f"Hoja '{sheet_name}' no encontrada en el archivo")
+
+    ws = wb[sheet_name]
+
+    # Buscar fila de encabezados (contiene "Cupos")
+    header_row_num = None
+    for row_num in range(1, 20):
+        row_data = list(ws.iter_rows(min_row=row_num, max_row=row_num, values_only=True))[0]
+        if any('Cupos' in str(cell) if cell else False for cell in row_data):
+            header_row_num = row_num
+            break
+
+    if not header_row_num:
+        wb.close()
+        raise ValueError("No se encontró fila de encabezados con 'Cupos'")
+
+    # Leer filas importantes
+    fila_categorias = list(ws.iter_rows(min_row=header_row_num-1, max_row=header_row_num-1, values_only=True))[0]
+    fila_encabezados = list(ws.iter_rows(min_row=header_row_num, max_row=header_row_num, values_only=True))[0]
+
+    # Determinar tipo de hoja y mapear columnas de identificación
+    # REGIONAL: solo tiene Cód.Reg y Regional (columnas A y B)
+    # CTROS: tiene Cód.Reg, Regional, Código Centro y Centro (columnas A, B, C y D)
+    is_regional = 'REGIONAL' in sheet_name.upper()
+
+    if is_regional:
+        # Hoja "4. FORMACIÓN X REGIONAL": solo 2 columnas de identificación
+        col_cod_reg = 0
+        col_regional = 1
+        col_cod_centro = None
+        col_centro = None
+    else:
+        # Hoja "5. FORMACIÓN X CTROS": 4 columnas de identificación
+        col_cod_reg = 0
+        col_regional = 1
+        col_cod_centro = 2
+        col_centro = 3
+
+    # Encontrar columnas de "Cupos" (metas)
+    columnas_cupos = []
+    mapeo_nombres = {
+        'Tecnólogos Regular - Presencial': 'M_TEC_REG_PRE',
+        'Tecnólogos Regular - Virtual': 'M_TEC_REG_VIR',
+        'Tecnólogos Regular - A Distancia': 'M_TEC_REG_A_D',
+        'Tecnólogos CampeSENA': 'M_TEC_CAMPESE',
+        'Tecnólogos Full Popular': 'M_TEC_FULL_PO',
+        'SubTotal Tecnólogos (E)': 'M_TECNOLOGOS',
+        'EDUCACION SUPERIOR (=E)': 'M_EDU_SUPERIO',
+        'Operarios Regular': 'M_OPE_REGULAR',
+        'Operarios CampeSENA': 'M_OPE_CAMPESE',
+        'Operarios Full Popular': 'M_OPE_FULL_PO',
+        'SubTotal Operarios (B)': 'M_SUB_TOT_OPE',
+        'Auxiliares Regular': 'M_AUX_REGULAR',
+        'Auxiliares CampeSENA': 'M_AUX_CAMPESE',
+        'Auxiliares Full Popular': 'M_AUX_FULL_PO',
+        'SubTotal Auxiliares (A)': 'M_SUB_TOT_AUX',
+        'Técnico Laboral Regular - Presencial': 'M_TCO_REG_PRE',
+        'Técnico Laboral Regular - Virtual': 'M_TCO_REG_VIR',
+        'Técnico Laboral CampeSENA': 'M_TCO_CAMPESE',
+        'Técnico Laboral Full Popular': 'M_TCO_FULL_PO',
+        'Técnico Laboral Articulación con la Media': 'M_TCO_ART_MED',
+        'SubTotal Técnico Laboral (C)': 'M_SUB_TCO_LAB',
+        'Profesional Técnico (T)': 'M_PROF_TECNIC',
+        'TOTAL FORMACIÓN LABORAL': 'M_TOT_FOR_LAB',
+        'TOTAL FORMACION TITULADA': 'M_TOT_FOR_TIT',
+        'Complementaria Virtual Sin Bilingüismo': 'M_COM_VIR_SBI',
+        'Complementaria Presencial Sin Bilingüismo': 'M_COM_PRE_SBI',
+        'Complementaria Bilingüismo Virtual': 'M_COM_BIL_VIR',
+        'Complementaria Bilingüismo Presencial': 'M_COM_BIL_PRE',
+        'SubTotal Programas Bilingües': 'M_SUB_PRO_BIN',
+        'Complementaria CampeSENA': 'M_COM_CAMPESE',
+        'Complementaria Full Popular': 'M_COM_FULL_PO',
+        'TOTAL COMPLEMENTARIA': 'M_TOT_COMPLEM',
+        'TOTAL FORMACIÓN PROFESIONAL': 'M_TOT_PROF_IN'
+    }
+
+    # Función auxiliar para normalizar texto (eliminar tildes y comparar)
+    def normalizar_texto(texto: str) -> str:
+        """Elimina tildes y normaliza texto para comparación."""
+        if not texto:
+            return ""
+        # Normalizar caracteres unicode (eliminar tildes)
+        normalized = unicodedata.normalize('NFKD', texto)
+        normalized = normalized.encode('ASCII', 'ignore').decode('ASCII')
+        return normalized.lower().strip()
+
+    for i, encabezado in enumerate(fila_encabezados):
+        if encabezado and 'Cupos' in str(encabezado):
+            categoria = fila_categorias[i] if i < len(fila_categorias) and fila_categorias[i] else None
+
+            # Buscar nombre normalizado
+            campo_nombre = None
+            if categoria:
+                categoria_normalizada = normalizar_texto(str(categoria))
+                for nombre_original, nombre_normalizado in mapeo_nombres.items():
+                    nombre_original_normalizado = normalizar_texto(nombre_original)
+                    # Comparar versiones normalizadas (sin tildes)
+                    if nombre_original_normalizado in categoria_normalizada:
+                        campo_nombre = nombre_normalizado
+                        break
+
+            # Si no hay mapeo, crear uno genérico
+            if not campo_nombre and categoria:
+                campo_nombre = f"M_{normalize_collection_name(str(categoria))}"
+
+            if campo_nombre:
+                columnas_cupos.append({
+                    'indice': i,
+                    'nombre': campo_nombre,
+                    'categoria_original': categoria
+                })
+
+    # Leer datos
+    data_start_row = header_row_num + 1
+    resultados = []
+
+    for row in ws.iter_rows(min_row=data_start_row, values_only=True):
+        # Verificar que la fila tenga datos
+        if not any(row):
+            continue
+
+        registro = {
+            'PERIODO': '2025',  # Por defecto, podría extraerse del nombre del archivo
+            'COD_REGIONAL': row[col_cod_reg] if col_cod_reg < len(row) else None,
+            'REGIONAL': row[col_regional] if col_regional < len(row) else None
+        }
+
+        # Solo agregar columnas de centro si existen en esta hoja
+        if col_cod_centro is not None and col_centro is not None:
+            registro['COD_CENTRO'] = row[col_cod_centro] if col_cod_centro < len(row) else None
+            registro['CENTRO'] = row[col_centro] if col_centro < len(row) else None
+        else:
+            registro['COD_CENTRO'] = None
+            registro['CENTRO'] = None
+
+        # Agregar valores de metas
+        for col_info in columnas_cupos:
+            valor = row[col_info['indice']] if col_info['indice'] < len(row) else None
+            # Convertir a número si es posible
+            if valor is not None:
+                try:
+                    valor = float(valor) if isinstance(valor, (int, float)) else 0
+                except:
+                    valor = 0
+            else:
+                valor = 0
+
+            registro[col_info['nombre']] = valor
+
+        # Solo agregar si tiene código de regional o centro
+        if registro.get('COD_REGIONAL') or registro.get('COD_CENTRO'):
+            resultados.append(registro)
+
+    wb.close()
+    return resultados
 
 
 @app.get("/")
@@ -254,6 +432,110 @@ async def upload_file(file: UploadFile = File(...)):
         response["message"] += f" Datos guardados en {len([c for c in mongodb_collections if 'collection_name' in c])} colecciones de MongoDB."
 
     return response
+
+
+@app.post("/upload-metas")
+async def upload_metas(file: UploadFile = File(...)):
+    """
+    Sube un archivo Excel de metas SENA (.xlsx) y guarda las metas en MongoDB.
+
+    El archivo debe contener la hoja "5. FORMACIÓN X CTROS" o "4. FORMACIÓN X REGIONAL"
+    con las columnas de "Cupos" que representan las metas.
+
+    Returns:
+        Información sobre las metas procesadas y guardadas en MongoDB
+    """
+    if not file.filename.endswith(('.xlsx', '.xlsb')):
+        raise HTTPException(status_code=400, detail="Solo se permiten archivos .xlsx o .xlsb")
+
+    if not is_metas_file(file.filename):
+        raise HTTPException(
+            status_code=400,
+            detail="El archivo no parece ser un archivo de metas SENA. Debe contener 'Seguimiento', 'Metas' y 'SENA' en el nombre."
+        )
+
+    # Generar ID único
+    file_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
+    file_path = UPLOAD_DIR / file_id
+
+    # Guardar archivo
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    try:
+        database = get_database()
+        mongodb_collections = []
+
+        # Procesar hoja de CENTROS
+        try:
+            datos_centros = read_xlsx_sheet_metas(str(file_path), "5. FORMACIÓN X CTROS")
+
+            if datos_centros:
+                collection_name = "metas_fpi_centros"
+                collection = database[collection_name]
+
+                # Limpiar datos anteriores
+                collection.delete_many({})
+
+                # Insertar nuevos datos
+                collection.insert_many(datos_centros)
+
+                mongodb_collections.append({
+                    "sheet_name": "5. FORMACIÓN X CTROS",
+                    "collection_name": collection_name,
+                    "records_inserted": len(datos_centros)
+                })
+        except Exception as e:
+            mongodb_collections.append({
+                "sheet_name": "5. FORMACIÓN X CTROS",
+                "error": f"Error al procesar: {str(e)}"
+            })
+
+        # Procesar hoja de REGIONAL
+        try:
+            datos_regional = read_xlsx_sheet_metas(str(file_path), "4. FORMACIÓN X REGIONAL")
+
+            if datos_regional:
+                collection_name = "metas_fpi_regional"
+                collection = database[collection_name]
+
+                # Limpiar datos anteriores
+                collection.delete_many({})
+
+                # Insertar nuevos datos
+                collection.insert_many(datos_regional)
+
+                mongodb_collections.append({
+                    "sheet_name": "4. FORMACIÓN X REGIONAL",
+                    "collection_name": collection_name,
+                    "records_inserted": len(datos_regional)
+                })
+        except Exception as e:
+            mongodb_collections.append({
+                "sheet_name": "4. FORMACIÓN X REGIONAL",
+                "error": f"Error al procesar: {str(e)}"
+            })
+
+        # Limpiar archivo temporal
+        os.remove(file_path)
+
+        success_count = len([c for c in mongodb_collections if 'collection_name' in c])
+        error_count = len([c for c in mongodb_collections if 'error' in c])
+
+        return {
+            "file_name": file.filename,
+            "processing_date": datetime.now().isoformat(),
+            "collections_processed": success_count,
+            "errors": error_count,
+            "details": mongodb_collections,
+            "message": f"Archivo procesado exitosamente. {success_count} colecciones actualizadas."
+        }
+
+    except Exception as e:
+        # Limpiar archivo en caso de error
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        raise HTTPException(status_code=500, detail=f"Error al procesar archivo: {str(e)}")
 
 
 @app.get("/files")
